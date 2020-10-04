@@ -6,16 +6,20 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 module Algorithm.Sorting
   ( insertionSort
+  , quicksort
+  , mergesort
   ) where
 
+import qualified Prelude
 import Prelude (($), Ord(..), otherwise)
-import Data.Type.Equality
 import GHC.TypeLits as G
+import Unsafe.Coerce
 
 import Algorithm.Complexity
 import Algorithm.Data.List
@@ -66,3 +70,56 @@ quicksort (Cons x xs) = roundUp $ do
        s2 <- quicksort l2
        s1 `append` Cons x s2
     ) :: O(n^2 - n) (List n a)
+
+-- Merge Sort ------------------------------------------------------------------
+
+-- | A proof that two numbers are approximately equal
+data ApproxEq (n :: Nat) (m :: Nat) where
+  Equal :: ApproxEq n n
+  OffByOne :: ApproxEq (n+1) n
+deriving instance Prelude.Show (ApproxEq n m)
+
+-- | Two lists whose lengths sum to n that are approximately equal in length
+data HalfList n a =
+  forall l1 l2. (l1 + l2) ~ n => HalfList (ApproxEq l1 l2) (List l1 a) (List l2 a)
+deriving instance Prelude.Show a => Prelude.Show (HalfList n a)
+
+ae_plus1 :: ApproxEq n m -> ApproxEq (n + 1) (m + 1)
+ae_plus1 Equal = Equal
+ae_plus1 OffByOne = OffByOne
+
+-- | Split a list into two sections that are approximately equal in length
+split :: List n a -> O(n) (HalfList n a)
+split Nil = emptyCase $ HalfList Equal Nil Nil
+split (Cons x Nil) = return $ HalfList OffByOne (Cons x Nil) Nil
+split (Cons x1 (Cons x2 xs)) = do
+  res <- split xs
+  case res of
+    HalfList pf l1 l2 ->
+      HalfList (ae_plus1 pf) <$> cons x1 l1 <*> cons x2 l2
+
+-- | Merge two sorted lists
+merge :: Ord a => List n a -> List m a -> O(n + m) (List (n + m) a)
+merge Nil ys = roundUp $ emptyCase ys
+merge xs Nil = roundUp $ emptyCase xs
+merge (Cons x xs) (Cons y ys)
+  | x < y = do
+      tl <- merge xs (Cons y ys)
+      cons x tl
+  | otherwise = do
+      tl <- merge (Cons x xs) ys
+      cons y tl
+
+-- | Sort a list in O(n log n) time
+mergesort :: forall n a. Ord a => List n a -> O(n G.* Log2 n) (List n a)
+mergesort Nil = emptyCase Nil
+mergesort l@(Cons _ Nil) = emptyCase l
+mergesort l = do
+  sublists <- split l
+  (case sublists of
+    -- TODO: Prove the runtime is correct
+    HalfList _ l1 l2 -> unsafeCoerce $ do
+      s1 <- mergesort l1
+      s2 <- mergesort l2
+      merge s1 s2
+    ) :: O(n G.* Log2 n - n) (List n a)
